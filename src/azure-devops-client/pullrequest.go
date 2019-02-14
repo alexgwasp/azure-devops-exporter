@@ -1,77 +1,103 @@
 package AzureDevopsClient
 
 import (
-	"fmt"
-	"time"
-	"net/url"
 	"encoding/json"
+	"fmt"
+	"net/url"
+	"time"
 )
 
 type PullRequestList struct {
-	Count int `json:"count"`
-	List []PullRequest `json:"value"`
+	Count int           `json:"count"`
+	List  []PullRequest `json:"value"`
 }
 
 type PullRequest struct {
-	Id int64 `json:"pullRequestId"`
+	Id           int64 `json:"pullRequestId"`
 	CodeReviewId int64 `json:"codeReviewId"`
 
-	Title string
+	Title       string
 	Description string
-	Uri string
-	Url string
+	Uri         string
+	Url         string
 
-	CreatedBy struct {
-		Id string
-		DisplayName string
-		UniqueName string
-	}
+	CreatedBy IdentifyRef
 
 	SourceRefName string
 	TargetRefName string
 
 	Reviewers []PullRequestReviewer
+	Labels []PullRequestLabels
 
-	Status string `json:"status"`
+	Status       string `json:"status"`
 	CreationDate time.Time
-	ClosedDate time.Time
+	ClosedDate   time.Time
 
 	Links Links `json:"_links"`
 }
 
 type PullRequestReviewer struct {
-	Vote int64
+	Vote        int64
 	DisplayName string
 }
 
-func (v *PullRequest) GetVoteSummary() map[string]int {
-	ret := map[string]int{
-		"approved": 0,
-		"approvedSuggestions": 0,
-		"none": 0,
-		"waitingForAuthor": 0,
-		"rejected": 0,
-	}
+type PullRequestLabels struct {
+	Id string
+	Name string
+	Active bool
+}
+
+type PullRequestVoteSummary struct {
+	Approved int64
+	ApprovedSuggestions int64
+	None int64
+	WaitingForAuthor int64
+	Rejected int64
+	Count int64
+}
+
+func (v *PullRequest) GetVoteSummary() PullRequestVoteSummary {
+	ret := PullRequestVoteSummary{}
 
 	for _, reviewer := range v.Reviewers {
+		ret.Count++
 		switch reviewer.Vote {
 		case 10:
-			ret["approved"]++
+			ret.Approved++
 		case 5:
-			ret["approvedSuggestions"]++
+			ret.ApprovedSuggestions++
 		case 0:
-			ret["none"]++
+			ret.None++
 		case -5:
-			ret["waitingForAuthor"]++
+			ret.WaitingForAuthor++
 		case -10:
-			ret["rejected"]++
+			ret.Rejected++
 		}
 	}
 
 	return ret
 }
 
+func (v *PullRequestVoteSummary) HumanizeString() (status string) {
+	status = "None"
+
+	if v.Rejected >= 1 {
+		status = "Rejected"
+	} else if v.WaitingForAuthor >= 1 {
+		status = "WaitingForAuthor"
+	} else if v.ApprovedSuggestions >= 1 {
+		status = "ApprovedSuggestions"
+	} else if v.Approved >= 1 {
+		status = "Approved"
+	}
+
+	return
+}
+
 func (c *AzureDevopsClient) ListPullrequest(project, repositoryId string) (list PullRequestList, error error) {
+	defer c.concurrencyUnlock()
+	c.concurrencyLock()
+
 	url := fmt.Sprintf(
 		"%v/_apis/git/repositories/%v/pullrequests?api-version=4.1&searchCriteria.status=active",
 		url.QueryEscape(project),
@@ -79,8 +105,7 @@ func (c *AzureDevopsClient) ListPullrequest(project, repositoryId string) (list 
 	)
 
 	response, err := c.restDev().R().Get(url)
-
-	if err != nil {
+	if err := c.checkResponse(response, err); err != nil {
 		error = err
 		return
 	}
@@ -93,4 +118,3 @@ func (c *AzureDevopsClient) ListPullrequest(project, repositoryId string) (list 
 
 	return
 }
-
